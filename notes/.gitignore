@@ -1,0 +1,91 @@
+# LaTeX temporary files
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.lof
+*.lot
+*.idx
+*.ind
+*.ilg
+*.glo
+*.gls
+*.glg
+*.acn
+*.acr
+*.alg
+*.bcf
+*.run.xml
+*.nav
+*.snm
+*.vrb
+
+# LaTeX build directories
+_build/
+build/
+output/
+
+# BibTeX
+*.bbl
+*.blg
+*.bib.bak
+
+# LaTeX Beamer
+*.nav
+*.snm
+*.vrb
+
+# LaTeXmk
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+
+# MiKTeX
+miktex/
+
+# TeXworks
+*.synctex
+
+# Editor temporary files
+*~
+*.swp
+*.swo
+*_backup
+*.bak
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# PDF files (uncomment if you don't want to track PDFs)
+# *.pdf
+
+# Backup files
+*.backup
+*.old
+
+000main.pdf
+000main.bbl
+000main.blg
+000main.aux
+000main.log
+000main.out
+000main.synctex.gz
+000main.toc
+000main.lof 
