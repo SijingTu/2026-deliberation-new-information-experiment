@@ -36,6 +36,11 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
+
+BASE_OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs", "model1")
+STATIONARY_DIR = os.path.join(BASE_OUTPUT_DIR, "stationary")
+MIXING_DIR = os.path.join(BASE_OUTPUT_DIR, "mixing")
+
 def build_transition_matrix(lam: float, M: int, renormalize: bool = True):
     """
     Build the MxM transition matrix P for the discretized Model One kernel K(x, z).
@@ -129,7 +134,13 @@ def distribution_stats(pi: np.ndarray, bins: np.ndarray) -> tuple[float, float, 
     return mean, variance, std_dev
 
 def write_all_stats_to_file(M: int = 2000, eps: float = 1e-10) -> None:
+    """
+    Compute basic statistics of the stationary distribution for a grid of lambdas
+    and write them to a table under outputs/model1/stationary.
+    """
     lambdas = np.linspace(0.0, 0.99, 100)
+    os.makedirs(STATIONARY_DIR, exist_ok=True)
+    stats_path = os.path.join(STATIONARY_DIR, "model1_stationary_stats.txt")
 
     header = "{:<8} {:>14} {:>14} {:>14}".format(
         "lambda", "mean", "variance", "std_dev"
@@ -137,44 +148,133 @@ def write_all_stats_to_file(M: int = 2000, eps: float = 1e-10) -> None:
     print(header)
     print("-" * len(header))
 
-    for lam in lambdas:
-        pi, bins = simulate(lam, M, eps)
-        mean, variance, std_dev = distribution_stats(pi, bins)
-        print("{:<8.2f} {:>14.8e} {:>14.8e} {:>14.8e}".format(
-            lam, mean, variance, std_dev
-        ))
-        with open("stats.txt", "a") as f:
-            f.write("{:<8.2f} {:>14.8e} {:>14.8e} {:>14.8e}\n".format(
+    with open(stats_path, "w", encoding="utf-8") as f:
+        f.write(header + "\n")
+        f.write("-" * len(header) + "\n")
+
+        for lam in lambdas:
+            pi, bins = simulate(lam, M, eps)
+            mean, variance, std_dev = distribution_stats(pi, bins)
+            line = "{:<8.2f} {:>14.8e} {:>14.8e} {:>14.8e}".format(
                 lam, mean, variance, std_dev
-            ))
+            )
+            print(line)
+            f.write(line + "\n")
 
 
-def write_all_histograms(M: int = 2000, eps: float = 1e-10, output_dir: str = "sim") -> None:
+def write_all_stationary_histograms(
+    M: int = 2000,
+    eps: float = 1e-10,
+    output_dir: str | None = None,
+) -> None:
+    """
+    Generate stationary-distribution histograms for a grid of lambdas and save
+    them under outputs/model1/stationary by default.
+    """
     lambdas = np.linspace(0.00, 0.99, 100)
-    target_dir = os.path.join(os.path.dirname(__file__), output_dir)
+    target_dir = output_dir or STATIONARY_DIR
     os.makedirs(target_dir, exist_ok=True)
 
     for lam in lambdas:
         pi, bins = simulate(lam, M, eps)
-        output_path = os.path.join(target_dir, f"hist_lambda_{lam:.2f}.png")
-        title = f"Stationary distribution (lambda={lam:.2f})"
+        output_path = os.path.join(
+            target_dir, f"model1_stationary_hist_lambda_{lam:.2f}.png"
+        )
+        title = f"Model One stationary distribution (lambda={lam:.2f})"
         draw_histogram(pi, bins, output_path=output_path, title=title)
 
 
+def second_largest_eigenvalue(P: np.ndarray) -> float:
+    """
+    Return the second-largest eigenvalue modulus of the transition matrix P.
+
+    For an irreducible, aperiodic Markov chain, the largest eigenvalue is 1.
+    The second-largest eigenvalue (in absolute value) controls the spectral gap.
+    """
+    # Use eigenvalues of P^T; eigenvalues are the same as for P.
+    eigvals = np.linalg.eigvals(P.T)
+    moduli = np.sort(np.abs(eigvals))[::-1]
+    if moduli.size < 2:
+        return 0.0
+    return float(moduli[1])
+
+
+def spectral_mixing_time(eps: float, lambda2: float) -> float:
+    """
+    Spectral proxy for the ε-mixing time based on the spectral gap 1 - lambda2.
+    """
+    if not (0.0 < eps < 1.0):
+        raise ValueError("eps must be in (0, 1).")
+    if lambda2 >= 1.0:
+        return float("inf")
+    gap = 1.0 - lambda2
+    return float(np.log(1.0 / eps) / gap)
+
+
+def write_mixing_time_spectral(
+    M: int = 2000,
+    eps_stationary: float = 1e-10,
+    eps_mixing: float = 1e-3,
+) -> None:
+    """
+    For a grid of lambdas, compute a spectral mixing-time proxy and write
+    results under outputs/model1/mixing.
+
+    The proxy is
+        t_mix^(spec)(eps_mixing, lambda) ≈ log(1/eps_mixing) / (1 - lambda2(lambda)),
+    where lambda2(lambda) is the second-largest eigenvalue modulus of P(lambda).
+    """
+    os.makedirs(MIXING_DIR, exist_ok=True)
+    out_path = os.path.join(MIXING_DIR, "model1_mixing_spectral.txt")
+    lambdas = np.linspace(0.0, 0.99, 100)
+
+    header = "{:<8} {:>14} {:>14} {:>14}".format(
+        "lambda", "lambda2", "spectral_gap", "t_mix_spec"
+    )
+    print(header)
+    print("-" * len(header))
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(header + "\n")
+        f.write("-" * len(header) + "\n")
+
+        for lam in lambdas:
+            P, _ = build_transition_matrix(lam, M, renormalize=True)
+            lambda2 = second_largest_eigenvalue(P)
+            spectral_gap = 1.0 - lambda2
+            t_mix_spec = spectral_mixing_time(eps_mixing, lambda2)
+
+            line = "{:<8.2f} {:>14.8e} {:>14.8e} {:>14.8e}".format(
+                lam, lambda2, spectral_gap, t_mix_spec
+            )
+            print(line)
+            f.write(line + "\n")
+
+
+def generate_stationary_histograms(M: int = 2000, eps: float = 1e-10) -> None:
+    write_all_stationary_histograms(M, eps)
+
+
+def generate_stationary_stats(M: int = 2000, eps: float = 1e-10) -> None:
+    write_all_stats_to_file(M, eps)
+
+
+def generate_mixing_time_spectral(M: int = 2000, eps_mixing: float = 1e-3) -> None:
+    write_mixing_time_spectral(M=M, eps_stationary=1e-10, eps_mixing=eps_mixing)
+
+
 if __name__ == "__main__":
-    # lam = 0.5
     M = 2000
-    eps = 1e-10
-    # pi, bins = simulate(lam, M, eps)
-    # print("pi sum:", pi.sum())
-    # print("bins shape:", bins.shape)
-    # print("pi:", pi)
-    # print("bins:", bins)
+    eps_stationary = 1e-10
+    eps_mixing = 1e-3
 
-    # mean, variance, std_dev = distribution_stats(pi, bins)
-    # print("mean:", mean)
-    # print("variance:", variance)
-    # print("std_dev:", std_dev)
+    run_stationary_histograms = True
+    run_stationary_stats = True
+    run_mixing_spectral = True
 
-    # write_all_stats_to_file(M, eps)
-    write_all_histograms(M, eps, output_dir="sim")
+    if run_stationary_histograms:
+        generate_stationary_histograms(M, eps_stationary)
+    if run_stationary_stats:
+        generate_stationary_stats(M, eps_stationary)
+    if run_mixing_spectral:
+        generate_mixing_time_spectral(M, eps_mixing)
