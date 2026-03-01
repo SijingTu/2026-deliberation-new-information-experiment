@@ -38,48 +38,12 @@ def simulate_adaptive_stances(n, T, seed, ll=1):
     # Deliberation rounds
     for t in range(1, T+1):
         # Randomly select two agents
-        i, j = rng.choice(range(1, n+1), size=2, replace=True) # sj: should be with replacement
+        i, j = rng.choice(range(1, n+1), size=2, replace=True) 
 
-        stances[i] = bliss_points[i]*(1 - ll) + o_prev * ll
-        stances[j] = bliss_points[j]*(1 - ll) + o_prev * ll
         o_current = median_of_three(stances[i], stances[j], o_prev)
+        stances[i] = bliss_points[i]*(1 - ll) + o_current * ll
+        stances[j] = bliss_points[j]*(1 - ll) + o_current * ll
 
-        # if mark_first_time[i]:
-        #     stances[i] = center_of_two(bliss_points[i], o_prev) 
-        #     mark_first_time[i] = False
-        # else:
-        #     stances[i] = median_of_three(bliss_points[i], stances[i], o_prev)
-        
-        # if mark_first_time[j]:
-        #     stances[j] = center_of_two(bliss_points[j], o_prev)
-        #     mark_first_time[j] = False
-        # else:
-        #     stances[j] = median_of_three(bliss_points[j], stances[j], o_prev)
-
-        # Current outcome: median of two stances and previous outcome
-
-        # Update stances for agents i and j
-        # Agent i
-        # if stances[i] == bliss_points[i]:
-        #     # With prob 2/3 stay at bliss point, with prob 1/3 move to outcome
-        #     if rng_stance.random() < 2/3:
-        #         stances[i] = bliss_points[i]
-        #     else:
-        #         stances[i] = o_current
-        # else:
-        # stances[i] = median_of_three(bliss_points[i], stances[i], o_current)
-
-        # Agent j
-        # if stances[j] == bliss_points[j]:
-        #     # With prob 2/3 stay at bliss point, with prob 1/3 move to outcome
-        #     if rng_stance.random() < 2/3:
-        #         stances[j] = bliss_points[j]
-        #     else:
-        #         stances[j] = o_current
-        # else:
-        # stances[j] = median_of_three(bliss_points[j], stances[j], o_current)
-
-        # Update outcome
         o_prev = o_current
 
     return o_prev

@@ -238,6 +238,9 @@ pythontex-files-*/
 # titletoc
 *.ptc
 
+# Generated plots
+*.png
+
 # todonotes
 *.tdo
 
