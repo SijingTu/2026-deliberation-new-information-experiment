@@ -1,24 +1,35 @@
 """
-Model One: Markov chain on state space {1, 2, ..., n} and its stationary distribution.
+Model One: discretized Markov chain on [0, 1] and its stationary distribution.
 
-We follow the model in 020modelone.tex. There are n agents, each with a bliss point
-a*_u in {1, 2, ..., n}, drawn i.i.d. uniformly. Stances and outcomes lie in [1, n].
-At deliberation round t, the state X_t is the current outcome o_t.
+We follow the model one in the note. There is a continuum of agents,
+each with a fixed bliss point a*_u in [0, 1], drawn i.i.d. from the uniform
+distribution. At deliberation round t, the state X_t is the current alternative
+o_t in [0, 1].
 
 At each round:
 - Sample two agents u and v uniformly at random.
 - Given the previous outcome X_{t-1}, form temporary stances
-    a_u^t = a*_u (1 - λ) + X_{t-1} λ,
-    a_v^t = a*_v (1 - λ) + X_{t-1} λ,
+    a_u^t = (1 - λ) a*_u + λ X_{t-1},
+    a_v^t = (1 - λ) a*_v + λ X_{t-1},
   where λ in (0, 1) controls how responsive stances are to the previous outcome.
 - The new outcome is the median of the two stances and the previous outcome:
     X_t = median(a_u^t, a_v^t, X_{t-1}).
 
-With bliss points i.i.d. uniform on {1, 2, ..., n}, this defines a Markov chain (X_t)
-with conditional CDF H_i(z) = P(X_t <= z | X_{t-1} = i). We discretize using
-intervals I_j = (j - 1/2, j + 1/2] for j = 1, ..., n, so the transition matrix is
-P_{i,j} = H_i(j + 1/2) - H_i(j - 1/2). The stationary distribution pi is computed
-by power iteration on P.
+Under the assumptions (a*_u i.i.d. Uniform[0, 1] and infinitely many agents),
+this defines a one-dimensional Markov chain (X_t) with an explicit conditional
+CDF K(x, z) = P(X_t <= z | X_{t-1} = x). The function build_transition_matrix
+implements a standard discretization of this kernel on a uniform grid:
+
+- Partition [0, 1] into M bins with edges b[0], ..., b[M] and midpoints
+  x[0], ..., x[M-1].
+- Interpret state index k as the midpoint x[k] of bin k.
+- Use the CDF K(x[k], z) to obtain the probability that the next state falls
+  into bin m via
+      P[k, m] = K(x[k], b[m+1]) - K(x[k], b[m]).
+
+The resulting row-stochastic matrix P is an approximation to the transition
+kernel of Model One restricted to this grid. The stationary distribution pi is
+then approximated numerically by power iteration on P.
 """
 
 import os
@@ -30,73 +41,53 @@ BASE_OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs", "model1")
 STATIONARY_DIR = os.path.join(BASE_OUTPUT_DIR, "stationary")
 MIXING_DIR = os.path.join(BASE_OUTPUT_DIR, "mixing")
 
-
-def _H_i(z: float, i_val: int, lam: float, n: int) -> float:
+def build_transition_matrix(lam: float, M: int, renormalize: bool = True):
     """
-    Transition CDF H_i(z) = P(X_t <= z | X_{t-1} = i).
+    Build the MxM transition matrix P for the discretized Model One kernel K(x, z).
 
-    State value i is in {1, ..., n}. Formula from 020modelone.tex eq (91)-(98):
-    - 0 if z < a_i
-    - (1/n * floor((z - λi)/(1-λ)))^2 if a_i <= z < i
-    - 1 - (1 - 1/n*floor(...))^2 if i <= z < b_i
-    - 1 if z >= b_i
-    where a_i = λi + 1 - λ, b_i = (1-λ)n + λi.
-    """
-    if lam >= 1.0:
-        raise ValueError("lambda must be in [0, 1).")
-    a_i = lam * i_val + 1.0 - lam
-    b_i = (1.0 - lam) * n + lam * i_val
-    if z < a_i:
-        return 0.0
-    if z >= b_i:
-        return 1.0
-    denom = 1.0 - lam
-    # floor((z - λi)/(1-λ)); in [a_i, b_i) we have 1 <= floor <= n
-    raw = (z - lam * i_val) / denom
-    k = int(np.floor(raw))
-    k = max(1, min(n, k))
-    frac = k / n
-    if z < i_val:
-        return frac * frac
-    else:
-        return 1.0 - (1.0 - frac) * (1.0 - frac)
-
-
-def build_transition_matrix(lam: float, n: int, renormalize: bool = True):
-    """
-    Build the n×n transition matrix P for Model One with discrete bliss points.
-
-    State index 0 corresponds to value 1, ..., state index n-1 to value n.
-    Interval I_j = (j - 1/2, j + 1/2] for j = 1, ..., n.
-    P[i, j] = H_{i+1}((j+1) + 1/2) - H_{i+1}((j+1) - 1/2).
+    Each row k corresponds to the current state X_{t-1} = x[k] (the midpoint of
+    bin k). The (k, m) entry is the probability that X_t falls into bin m,
+    computed by integrating the conditional CDF K(x[k], z) over bin m.
     """
     if not (0 <= lam < 1):
         raise ValueError("lambda must be in [0, 1).")
 
-    P = np.zeros((n, n), dtype=float)
-    for i_idx in range(n):
-        i_val = i_idx + 1
-        for j_idx in range(n):
-            j_val = j_idx + 1
-            ell_j = j_val - 0.5
-            u_j = j_val + 0.5
-            P[i_idx, j_idx] = _H_i(u_j, i_val, lam, n) - _H_i(ell_j, i_val, lam, n)
+    # bins b[0..M] and midpoints x[1..M]
+    b = np.linspace(0.0, 1.0, M + 1)
+    x = 0.5 * (b[:-1] + b[1:])  # length M
+
+    def K(x_val, z_val):
+        L = lam * x_val
+        U = lam * x_val + 1.0 - lam
+        if z_val < L:
+            return 0.0
+        if z_val > U:
+            return 1.0
+        h = (z_val - L) / (1.0 - lam)
+        if z_val < x_val:
+            return h * h
+        else:
+            return 1.0 - (1.0 - h) * (1.0 - h)
+
+    # Build P[k, m]
+    P = np.zeros((M, M), dtype=float)
+    for k in range(M):
+        for m in range(M):
+            P[k, m] = K(x[k], b[m + 1]) - K(x[k], b[m])
 
         if renormalize:
-            row_sum = P[i_idx].sum()
+            row_sum = P[k].sum()
             if row_sum > 0:
-                P[i_idx] /= row_sum
+                P[k] /= row_sum
 
-    bins = np.linspace(0.5, n + 0.5, n + 1)
-    return P, bins
-
+    return P, b
 
 def power_iteration_stationary(P: np.ndarray, eps: float = 1e-10, max_iter: int = 1_000_000):
     """
     Power iteration on row-stochastic P to find stationary distribution pi.
     """
-    n_states = P.shape[0]
-    pi = np.ones(n_states) / n_states
+    M = P.shape[0]
+    pi = np.ones(M) / M
 
     for _ in range(max_iter):
         pi_new = pi @ P
@@ -106,12 +97,10 @@ def power_iteration_stationary(P: np.ndarray, eps: float = 1e-10, max_iter: int 
 
     return pi  # return last iterate if not converged
 
-
-def simulate(lam: float, n: int = 2000, eps: float = 1e-10, renormalize: bool = True):
-    P, bins = build_transition_matrix(lam, n, renormalize=renormalize)
+def simulate(lam: float, M: int = 2000, eps: float = 1e-10, renormalize: bool = True):
+    P, bins = build_transition_matrix(lam, M, renormalize=renormalize)
     pi = power_iteration_stationary(P, eps=eps)
     return pi, bins
-
 
 def draw_histogram(
     pi: np.ndarray,
@@ -121,10 +110,10 @@ def draw_histogram(
 ) -> None:
     if bins.shape[0] != pi.shape[0] + 1:
         raise ValueError("bins must be length len(pi) + 1.")
-
+    
     centers = 0.5 * (bins[:-1] + bins[1:])
     width = bins[1] - bins[0]
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots()        
     ax.bar(centers, pi, width=width, align="center", edgecolor="none")
     ax.set_xlabel("x (bin midpoint)")
     ax.set_ylabel("pi")
@@ -132,7 +121,6 @@ def draw_histogram(
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)
-
 
 def distribution_stats(pi: np.ndarray, bins: np.ndarray) -> tuple[float, float, float]:
     if bins.shape[0] != pi.shape[0] + 1:
@@ -145,8 +133,7 @@ def distribution_stats(pi: np.ndarray, bins: np.ndarray) -> tuple[float, float, 
     std_dev = np.sqrt(variance)
     return mean, variance, std_dev
 
-
-def write_all_stats_to_file(n: int = 2000, eps: float = 1e-10) -> None:
+def write_all_stats_to_file(M: int = 2000, eps: float = 1e-10) -> None:
     """
     Compute basic statistics of the stationary distribution for a grid of lambdas
     and write them to a table under outputs/model1/stationary.
@@ -166,7 +153,7 @@ def write_all_stats_to_file(n: int = 2000, eps: float = 1e-10) -> None:
         f.write("-" * len(header) + "\n")
 
         for lam in lambdas:
-            pi, bins = simulate(lam, n, eps)
+            pi, bins = simulate(lam, M, eps)
             mean, variance, std_dev = distribution_stats(pi, bins)
             line = "{:<8.2f} {:>14.8e} {:>14.8e} {:>14.8e}".format(
                 lam, mean, variance, std_dev
@@ -176,7 +163,7 @@ def write_all_stats_to_file(n: int = 2000, eps: float = 1e-10) -> None:
 
 
 def write_all_stationary_histograms(
-    n: int = 2000,
+    M: int = 2000,
     eps: float = 1e-10,
     output_dir: str | None = None,
 ) -> None:
@@ -189,7 +176,7 @@ def write_all_stationary_histograms(
     os.makedirs(target_dir, exist_ok=True)
 
     for lam in lambdas:
-        pi, bins = simulate(lam, n, eps)
+        pi, bins = simulate(lam, M, eps)
         output_path = os.path.join(
             target_dir, f"model1_stationary_hist_lambda_{lam:.2f}.png"
         )
@@ -204,6 +191,7 @@ def second_largest_eigenvalue(P: np.ndarray) -> float:
     For an irreducible, aperiodic Markov chain, the largest eigenvalue is 1.
     The second-largest eigenvalue (in absolute value) controls the spectral gap.
     """
+    # Use eigenvalues of P^T; eigenvalues are the same as for P.
     eigvals = np.linalg.eigvals(P.T)
     moduli = np.sort(np.abs(eigvals))[::-1]
     if moduli.size < 2:
@@ -224,7 +212,7 @@ def spectral_mixing_time(eps: float, lambda2: float) -> float:
 
 
 def write_mixing_time_spectral(
-    n: int = 2000,
+    M: int = 2000,
     eps_stationary: float = 1e-10,
     eps_mixing: float = 1e-3,
 ) -> None:
@@ -251,7 +239,7 @@ def write_mixing_time_spectral(
         f.write("-" * len(header) + "\n")
 
         for lam in lambdas:
-            P, _ = build_transition_matrix(lam, n, renormalize=True)
+            P, _ = build_transition_matrix(lam, M, renormalize=True)
             lambda2 = second_largest_eigenvalue(P)
             spectral_gap = 1.0 - lambda2
             t_mix_spec = spectral_mixing_time(eps_mixing, lambda2)
@@ -263,20 +251,20 @@ def write_mixing_time_spectral(
             f.write(line + "\n")
 
 
-def generate_stationary_histograms(n: int = 2000, eps: float = 1e-10) -> None:
-    write_all_stationary_histograms(n, eps)
+def generate_stationary_histograms(M: int = 2000, eps: float = 1e-10) -> None:
+    write_all_stationary_histograms(M, eps)
 
 
-def generate_stationary_stats(n: int = 2000, eps: float = 1e-10) -> None:
-    write_all_stats_to_file(n, eps)
+def generate_stationary_stats(M: int = 2000, eps: float = 1e-10) -> None:
+    write_all_stats_to_file(M, eps)
 
 
-def generate_mixing_time_spectral(n: int = 2000, eps_mixing: float = 1e-3) -> None:
-    write_mixing_time_spectral(n=n, eps_stationary=1e-10, eps_mixing=eps_mixing)
+def generate_mixing_time_spectral(M: int = 2000, eps_mixing: float = 1e-3) -> None:
+    write_mixing_time_spectral(M=M, eps_stationary=1e-10, eps_mixing=eps_mixing)
 
 
 if __name__ == "__main__":
-    n = 2000
+    M = 2000
     eps_stationary = 1e-10
     eps_mixing = 1e-3
 
@@ -285,8 +273,8 @@ if __name__ == "__main__":
     run_mixing_spectral = True
 
     if run_stationary_histograms:
-        generate_stationary_histograms(n, eps_stationary)
+        generate_stationary_histograms(M, eps_stationary)
     if run_stationary_stats:
-        generate_stationary_stats(n, eps_stationary)
+        generate_stationary_stats(M, eps_stationary)
     if run_mixing_spectral:
-        generate_mixing_time_spectral(n, eps_mixing)
+        generate_mixing_time_spectral(M, eps_mixing)
