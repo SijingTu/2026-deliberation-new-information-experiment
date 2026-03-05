@@ -146,14 +146,34 @@ def distribution_stats(pi: np.ndarray, bins: np.ndarray) -> tuple[float, float, 
     return mean, variance, std_dev
 
 
-def write_all_stats_to_file(n: int = 2000, eps: float = 1e-10) -> None:
+def write_all_stats_to_file(data_dir: str | None = None) -> None:
     """
-    Compute basic statistics of the stationary distribution for a grid of lambdas
-    and write them to a table under outputs/model1/stationary.
+    Gather statistics from all histogram data files in the given directory
+    and write them to a table (model1_stationary_stats.txt) under the same directory.
     """
-    lambdas = np.linspace(0.0, 0.99, 100)
-    os.makedirs(STATIONARY_DIR, exist_ok=True)
-    stats_path = os.path.join(STATIONARY_DIR, "model1_stationary_stats.txt")
+    target_dir = data_dir or STATIONARY_DIR
+    os.makedirs(target_dir, exist_ok=True)
+    stats_path = os.path.join(target_dir, "model1_stationary_stats.txt")
+
+    rows = []
+    for fname in sorted(os.listdir(target_dir)):
+        if not fname.endswith(".txt") or fname == "model1_stationary_stats.txt":
+            continue
+        data_path = os.path.join(target_dir, fname)
+        try:
+            stats, _, _ = load_stationary_histogram_data(data_path)
+            rows.append(
+                (
+                    stats["lam"],
+                    stats["mean"],
+                    stats["variance"],
+                    stats["std"],
+                )
+            )
+        except (ValueError, OSError):
+            continue
+
+    rows.sort(key=lambda r: r[0])
 
     header = "{:<8} {:>14} {:>14} {:>14}".format(
         "lambda", "mean", "variance", "std_dev"
@@ -165,9 +185,7 @@ def write_all_stats_to_file(n: int = 2000, eps: float = 1e-10) -> None:
         f.write(header + "\n")
         f.write("-" * len(header) + "\n")
 
-        for lam in lambdas:
-            pi, bins = simulate(lam, n, eps)
-            mean, variance, std_dev = distribution_stats(pi, bins)
+        for lam, mean, variance, std_dev in rows:
             line = "{:<8.2f} {:>14.8e} {:>14.8e} {:>14.8e}".format(
                 lam, mean, variance, std_dev
             )
@@ -176,25 +194,107 @@ def write_all_stats_to_file(n: int = 2000, eps: float = 1e-10) -> None:
 
 
 def write_all_stationary_histograms(
+    lambdas: np.ndarray | None = None,
     n: int = 2000,
     eps: float = 1e-10,
     output_dir: str | None = None,
 ) -> None:
     """
-    Generate stationary-distribution histograms for a grid of lambdas and save
-    them under outputs/model1/stationary by default.
+    Compute stationary distributions for a grid of lambdas and write histogram
+    data to .txt files under outputs/model1/stationary by default.
     """
-    lambdas = np.linspace(0.00, 0.99, 100)
-    target_dir = output_dir or STATIONARY_DIR
+    lambda_values = np.atleast_1d(
+        np.linspace(0.00, 0.99, 100) if lambdas is None else lambdas
+    )
+    target_dir = output_dir or os.path.join(BASE_OUTPUT_DIR, f"{n}nodes", "stationary")
     os.makedirs(target_dir, exist_ok=True)
 
-    for lam in lambdas:
-        pi, bins = simulate(lam, n, eps)
-        output_path = os.path.join(
-            target_dir, f"model1_stationary_hist_lambda_{lam:.2f}.png"
+    for lam in lambda_values:
+        lam_f = float(lam)
+        pi, bins = simulate(lam_f, n, eps)
+        mean, variance, std_dev = distribution_stats(pi, bins)
+        data_path = os.path.join(
+            target_dir, f"model1_stationary_hist_lambda_{lam_f:.2f}.txt"
         )
-        title = f"Model One stationary distribution (lambda={lam:.2f})"
-        draw_histogram(pi, bins, output_path=output_path, title=title)
+        with open(data_path, "w", encoding="utf-8") as f:
+            f.write("n lam mean variance std\n")
+            f.write(
+                f"{n} {lam_f:.6f} {mean:.6f} {variance:.6f} {std_dev:.6f}\n"
+            )
+            f.write("bin_midpoint probability\n")
+            centers = 0.5 * (bins[:-1] + bins[1:])
+            for mid, prob in zip(centers, pi):
+                f.write(f"{mid:.6f} {prob:.6f}\n")
+
+
+def load_stationary_histogram_data(
+    histogram_data_path: str,
+) -> tuple[dict[str, float], np.ndarray, np.ndarray]:
+    """Load saved stats and bin midpoint/probability data from a histogram file."""
+    with open(histogram_data_path, "r", encoding="utf-8") as f:
+        stats_header = f.readline().split()
+        stats_values = f.readline().split()
+        hist_header = f.readline().split()
+
+        if stats_header != ["n", "lam", "mean", "variance", "std"]:
+            raise ValueError(
+                f"Unexpected stats header in {histogram_data_path}: {stats_header}"
+            )
+        if hist_header != ["bin_midpoint", "probability"]:
+            raise ValueError(
+                f"Unexpected histogram header in {histogram_data_path}: {hist_header}"
+            )
+        if len(stats_values) != 5:
+            raise ValueError(
+                f"Malformed stats row in {histogram_data_path}."
+            )
+
+        stats = {
+            "n": int(stats_values[0]),
+            "lam": float(stats_values[1]),
+            "mean": float(stats_values[2]),
+            "variance": float(stats_values[3]),
+            "std": float(stats_values[4]),
+        }
+
+        midpoints = []
+        probabilities = []
+        for line in f:
+            parts = line.split()
+            if not parts:
+                continue
+            midpoints.append(float(parts[0]))
+            probabilities.append(float(parts[1]))
+
+    if not midpoints:
+        raise ValueError(
+            f"No histogram rows were found in {histogram_data_path}."
+        )
+
+    return stats, np.array(midpoints), np.array(probabilities)
+
+
+def plot_histogram_from_data(
+    histogram_data_path: str,
+    plot_path: str,
+    title: str | None = None,
+) -> None:
+    """Draw one histogram from a saved histogram-data file."""
+    stats, midpoints, probabilities = load_stationary_histogram_data(
+        histogram_data_path
+    )
+    # Reconstruct bins from midpoints: I_j = (j - 1/2, j + 1/2], so edges at 0.5, 1.5, ..., n+0.5
+    bins = np.concatenate([[midpoints[0] - 0.5], midpoints + 0.5])
+    if title is None:
+        title = (
+            f"Model One stationary distribution (lambda={stats['lam']:.2f})"
+        )
+    draw_histogram(
+        probabilities,
+        bins,
+        output_path=plot_path,
+        title=title,
+    )
 
 
 def second_largest_eigenvalue(P: np.ndarray) -> float:
@@ -227,17 +327,19 @@ def write_mixing_time_spectral(
     n: int = 2000,
     eps_stationary: float = 1e-10,
     eps_mixing: float = 1e-3,
+    output_dir: str | None = None,
 ) -> None:
     """
     For a grid of lambdas, compute a spectral mixing-time proxy and write
-    results under outputs/model1/mixing.
+    results under outputs/model1/{n}nodes/mixing by default.
 
     The proxy is
         t_mix^(spec)(eps_mixing, lambda) ≈ log(1/eps_mixing) / (1 - lambda2(lambda)),
     where lambda2(lambda) is the second-largest eigenvalue modulus of P(lambda).
     """
-    os.makedirs(MIXING_DIR, exist_ok=True)
-    out_path = os.path.join(MIXING_DIR, "model1_mixing_spectral.txt")
+    mixing_dir = output_dir or os.path.join(BASE_OUTPUT_DIR, f"{n}nodes", "mixing")
+    os.makedirs(mixing_dir, exist_ok=True)
+    out_path = os.path.join(mixing_dir, "model1_mixing_spectral.txt")
     lambdas = np.linspace(0.0, 0.99, 100)
 
     header = "{:<8} {:>14} {:>14} {:>14}".format(
@@ -263,20 +365,31 @@ def write_mixing_time_spectral(
             f.write(line + "\n")
 
 
-def generate_stationary_histograms(n: int = 2000, eps: float = 1e-10) -> None:
-    write_all_stationary_histograms(n, eps)
+def generate_stationary_histograms(
+    lambdas: np.ndarray | None = None,
+    n: int = 2000,
+    eps: float = 1e-10,
+    output_dir: str | None = None,
+) -> None:
+    write_all_stationary_histograms(lambdas=lambdas, n=n, eps=eps, output_dir=output_dir)
 
 
-def generate_stationary_stats(n: int = 2000, eps: float = 1e-10) -> None:
-    write_all_stats_to_file(n, eps)
+def generate_stationary_stats(data_dir: str | None = None) -> None:
+    write_all_stats_to_file(data_dir=data_dir)
 
 
-def generate_mixing_time_spectral(n: int = 2000, eps_mixing: float = 1e-3) -> None:
-    write_mixing_time_spectral(n=n, eps_stationary=1e-10, eps_mixing=eps_mixing)
+def generate_mixing_time_spectral(
+    n: int = 2000,
+    eps_mixing: float = 1e-3,
+    output_dir: str | None = None,
+) -> None:
+    write_mixing_time_spectral(
+        n=n, eps_stationary=1e-10, eps_mixing=eps_mixing, output_dir=output_dir
+    )
 
 
 if __name__ == "__main__":
-    n = 2000
+    n = 1000
     eps_stationary = 1e-10
     eps_mixing = 1e-3
 
@@ -284,9 +397,21 @@ if __name__ == "__main__":
     run_stationary_stats = True
     run_mixing_spectral = True
 
+    nodes_dir = os.path.join(BASE_OUTPUT_DIR, f"{n}nodes")
+    stationary_dir = os.path.join(nodes_dir, "stationary")
+    mixing_dir = os.path.join(nodes_dir, "mixing")
+
     if run_stationary_histograms:
-        generate_stationary_histograms(n, eps_stationary)
+        generate_stationary_histograms(n=n, eps=eps_stationary, output_dir=stationary_dir)
+        for fname in sorted(os.listdir(stationary_dir)):
+            if not fname.endswith(".txt"):
+                continue
+            data_path = os.path.join(stationary_dir, fname)
+            plot_path = os.path.join(
+                stationary_dir, f"{os.path.splitext(fname)[0]}.png"
+            )
+            plot_histogram_from_data(data_path, plot_path)
     if run_stationary_stats:
-        generate_stationary_stats(n, eps_stationary)
+        generate_stationary_stats(data_dir=stationary_dir)
     if run_mixing_spectral:
-        generate_mixing_time_spectral(n, eps_mixing)
+        generate_mixing_time_spectral(n, eps_mixing, output_dir=mixing_dir)

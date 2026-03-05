@@ -1,31 +1,40 @@
 """
 Plot Model One variance and spectral mixing time versus lambda.
 
-This script reads:
+This script reads (under outputs/model1/{n}nodes/, matching model2 structure):
 - Stationary stats from:
-    outputs/model1/stationary/model1_stationary_stats.txt
+    outputs/model1/{n}nodes/stationary/model1_stationary_stats.txt
 - Spectral mixing-time proxies from:
-    outputs/model1/mixing/model1_mixing_spectral.txt
+    outputs/model1/{n}nodes/mixing/model1_mixing_spectral.txt
 
-and produces:
+and produces under outputs/model1/{n}nodes/analysis/:
 - a plot with variance(λ) and t_mix_spec(λ)
 - a plot comparing t_mix_spec(λ) to reciprocal conjectures based on
   spectral_gap(λ) ≈ a (1 - λ)
 """
 
+import argparse
 import os
 import matplotlib.pyplot as plt
 import numpy as np
 
 
 BASE_OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs", "model1")
+DEFAULT_N = 1000
+
+
+def _nodes_dir(n: int = DEFAULT_N) -> str:
+    """Return outputs/model1/{n}nodes, matching model2 folder structure."""
+    return os.path.join(BASE_OUTPUT_DIR, f"{n}nodes")
+
+
 STATIONARY_STATS_PATH = os.path.join(
-    BASE_OUTPUT_DIR, "stationary", "model1_stationary_stats.txt"
+    _nodes_dir(), "stationary", "model1_stationary_stats.txt"
 )
 MIXING_STATS_PATH = os.path.join(
-    BASE_OUTPUT_DIR, "mixing", "model1_mixing_spectral.txt"
+    _nodes_dir(), "mixing", "model1_mixing_spectral.txt"
 )
-ANALYSIS_DIR = os.path.join(BASE_OUTPUT_DIR, "analysis")
+ANALYSIS_DIR = os.path.join(_nodes_dir(), "analysis")
 
 
 def load_stationary_variance(path: str = STATIONARY_STATS_PATH):
@@ -75,6 +84,99 @@ def load_mixing_time(path: str = MIXING_STATS_PATH):
     return lambdas, t_mix
 
 
+def variance_conjecture(lam: float | np.ndarray, n: int) -> float | np.ndarray:
+    r"""
+    Original conjectured variance (for reference):
+
+    .. math::
+        \sigma^2(\lambda) = \frac{(n-1)^2 (1-\lambda)}{12(3+\lambda)}
+    """
+    lam = np.asarray(lam)
+    return (n - 1) ** 2 * (1.0 - lam) / (12.0 * (3.0 + lam))
+
+
+def variance_model(
+    lam: float | np.ndarray, n: int, a: float, b: float
+) -> float | np.ndarray:
+    r"""
+    Parametric model for variance: σ²(λ) = n²(1−λ) / (a + bλ).
+    Parameters a and b are fitted from data.
+    """
+    lam = np.asarray(lam)
+    denom = a + b * lam
+    if np.any(denom <= 0):
+        raise ValueError("a + b*λ must be positive for all λ in the range.")
+    return (n ** 2) * (1.0 - lam) / denom
+
+
+def fit_variance_model(
+    lam: np.ndarray, variances: np.ndarray, n: int
+) -> tuple[float, float]:
+    r"""
+    Fit parameters a, b in σ²(λ) = n²(1−λ)/(a + bλ) from empirical (lam, variances).
+
+    From the model, a + b·λ = n²(1−λ)/σ², so we solve the linear system
+    [1, λ_i] @ [a, b] = n²(1−λ_i)/σ²_i in least-squares sense.
+    """
+    valid = variances > 1e-15
+    if not np.any(valid):
+        raise ValueError("No positive variances to fit.")
+    lam_f = lam[valid]
+    var_f = variances[valid]
+    y = (n ** 2) * (1.0 - lam_f) / var_f
+    X = np.column_stack([np.ones_like(lam_f), lam_f])
+    (a, b), *_ = np.linalg.lstsq(X, y, rcond=None)
+    if a + b * np.min(lam_f) <= 0 or a + b * np.max(lam_f) <= 0:
+        raise ValueError(
+            "Fitted a, b give non-positive denominator in the λ range."
+        )
+    return float(a), float(b)
+
+
+def plot_variance_with_conjecture(n: int = DEFAULT_N) -> None:
+    """
+    Plot empirical variance (from data) and the fitted model
+    σ²(λ) = n²(1−λ)/(a + bλ) with a, b fitted from the data.
+    """
+    nodes_dir = _nodes_dir(n)
+    analysis_dir = os.path.join(nodes_dir, "analysis")
+    os.makedirs(analysis_dir, exist_ok=True)
+
+    stationary_path = os.path.join(
+        nodes_dir, "stationary", "model1_stationary_stats.txt"
+    )
+    lam_var, variances = load_stationary_variance(stationary_path)
+    a, b = fit_variance_model(lam_var, variances, n)
+    var_fitted = variance_model(lam_var, n, a, b)
+
+    fig, ax = plt.subplots()
+    ax.plot(
+        lam_var,
+        variances,
+        color="tab:blue",
+        linewidth=2.0,
+        label="Stationary distribution variance (data)",
+    )
+    ax.plot(
+        lam_var,
+        var_fitted,
+        color="tab:orange",
+        linestyle="--",
+        linewidth=2.0,
+        label=rf"Fitted $n^2(1-\lambda)/(a+b\lambda)$, $a={a:.2f}$, $b={b:.2f}$",
+    )
+    ax.set_xlabel(r"$\lambda$")
+    ax.set_ylabel("Variance")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    output_path = os.path.join(
+        analysis_dir, "model1_variance_vs_conjecture.png"
+    )
+    fig.savefig(output_path)
+    plt.close(fig)
+
+
 def fit_gap_linear_through_origin(lambdas: np.ndarray, gaps: np.ndarray) -> float:
     one_minus_lambda = 1.0 - lambdas
     denominator = float(np.dot(one_minus_lambda, one_minus_lambda))
@@ -83,11 +185,18 @@ def fit_gap_linear_through_origin(lambdas: np.ndarray, gaps: np.ndarray) -> floa
     return float(np.dot(one_minus_lambda, gaps) / denominator)
 
 
-def plot_variance_and_mixing():
-    os.makedirs(ANALYSIS_DIR, exist_ok=True)
+def plot_variance_and_mixing(n: int = DEFAULT_N):
+    nodes_dir = _nodes_dir(n)
+    analysis_dir = os.path.join(nodes_dir, "analysis")
+    os.makedirs(analysis_dir, exist_ok=True)
 
-    lam_var, variances = load_stationary_variance()
-    lam_mix, t_mix = load_mixing_time()
+    stationary_path = os.path.join(
+        nodes_dir, "stationary", "model1_stationary_stats.txt"
+    )
+    mixing_path = os.path.join(nodes_dir, "mixing", "model1_mixing_spectral.txt")
+
+    lam_var, variances = load_stationary_variance(stationary_path)
+    lam_mix, t_mix = load_mixing_time(mixing_path)
 
     fig, ax1 = plt.subplots()
 
@@ -102,18 +211,25 @@ def plot_variance_and_mixing():
     ax2.tick_params(axis="y", labelcolor="tab:red")
 
     fig.tight_layout()
-    output_path = os.path.join(ANALYSIS_DIR, "model1_variance_mixing_vs_lambda.png")
+    output_path = os.path.join(
+        analysis_dir, "model1_variance_mixing_vs_lambda.png"
+    )
     fig.savefig(output_path)
     plt.close(fig)
 
 
-def plot_mixing_with_conjecture(eps_mixing: float = 1e-3) -> None:
+def plot_mixing_with_conjecture(
+    eps_mixing: float = 1e-3, n: int = DEFAULT_N
+) -> None:
     if not (0.0 < eps_mixing < 1.0):
         raise ValueError("eps_mixing must be in (0, 1).")
 
-    os.makedirs(ANALYSIS_DIR, exist_ok=True)
+    nodes_dir = _nodes_dir(n)
+    analysis_dir = os.path.join(nodes_dir, "analysis")
+    os.makedirs(analysis_dir, exist_ok=True)
 
-    lambdas, _lambda2, gaps, t_mix = load_mixing_spectral()
+    mixing_path = os.path.join(nodes_dir, "mixing", "model1_mixing_spectral.txt")
+    lambdas, _lambda2, gaps, t_mix = load_mixing_spectral(mixing_path)
     a_fit = fit_gap_linear_through_origin(lambdas, gaps)
     one_minus_lambda = 1.0 - lambdas
 
@@ -167,11 +283,26 @@ def plot_mixing_with_conjecture(eps_mixing: float = 1e-3) -> None:
     fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False)
     fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.92))
 
-    output_path = os.path.join(ANALYSIS_DIR, "model1_mixing_vs_lambda_conjecture.png")
+    output_path = os.path.join(
+        analysis_dir, "model1_mixing_vs_lambda_conjecture.png"
+    )
     fig.savefig(output_path)
     plt.close(fig)
 
 
 if __name__ == "__main__":
-    plot_variance_and_mixing()
-    plot_mixing_with_conjecture()
+    parser = argparse.ArgumentParser(
+        description="Plot Model One variance and spectral mixing time versus lambda."
+    )
+    parser.add_argument(
+        "n",
+        type=int,
+        nargs="?",
+        default=DEFAULT_N,
+        help=f"Number of nodes (default: {DEFAULT_N})",
+    )
+    args = parser.parse_args()
+    n = args.n
+    plot_variance_and_mixing(n=n)
+    plot_variance_with_conjecture(n=n)
+    plot_mixing_with_conjecture(n=n)

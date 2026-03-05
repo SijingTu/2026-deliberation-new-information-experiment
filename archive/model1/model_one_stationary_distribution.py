@@ -136,11 +136,12 @@ def distribution_stats(pi: np.ndarray, bins: np.ndarray) -> tuple[float, float, 
 def write_all_stats_to_file(M: int = 2000, eps: float = 1e-10) -> None:
     """
     Compute basic statistics of the stationary distribution for a grid of lambdas
-    and write them to a table under outputs/model1/stationary.
+    and write them to a table under outputs/model1/{M}nodes/stationary.
     """
     lambdas = np.linspace(0.0, 0.99, 100)
-    os.makedirs(STATIONARY_DIR, exist_ok=True)
-    stats_path = os.path.join(STATIONARY_DIR, "model1_stationary_stats.txt")
+    stationary_dir = os.path.join(BASE_OUTPUT_DIR, f"{M}nodes", "stationary")
+    os.makedirs(stationary_dir, exist_ok=True)
+    stats_path = os.path.join(stationary_dir, "model1_stationary_stats.txt")
 
     header = "{:<8} {:>14} {:>14} {:>14}".format(
         "lambda", "mean", "variance", "std_dev"
@@ -169,10 +170,10 @@ def write_all_stationary_histograms(
 ) -> None:
     """
     Generate stationary-distribution histograms for a grid of lambdas and save
-    them under outputs/model1/stationary by default.
+    them under outputs/model1/{M}nodes/stationary by default.
     """
     lambdas = np.linspace(0.00, 0.99, 100)
-    target_dir = output_dir or STATIONARY_DIR
+    target_dir = output_dir or os.path.join(BASE_OUTPUT_DIR, f"{M}nodes", "stationary")
     os.makedirs(target_dir, exist_ok=True)
 
     for lam in lambdas:
@@ -215,17 +216,19 @@ def write_mixing_time_spectral(
     M: int = 2000,
     eps_stationary: float = 1e-10,
     eps_mixing: float = 1e-3,
+    output_dir: str | None = None,
 ) -> None:
     """
     For a grid of lambdas, compute a spectral mixing-time proxy and write
-    results under outputs/model1/mixing.
+    results under outputs/model1/{M}nodes/mixing by default.
 
     The proxy is
         t_mix^(spec)(eps_mixing, lambda) ≈ log(1/eps_mixing) / (1 - lambda2(lambda)),
     where lambda2(lambda) is the second-largest eigenvalue modulus of P(lambda).
     """
-    os.makedirs(MIXING_DIR, exist_ok=True)
-    out_path = os.path.join(MIXING_DIR, "model1_mixing_spectral.txt")
+    mixing_dir = output_dir or os.path.join(BASE_OUTPUT_DIR, f"{M}nodes", "mixing")
+    os.makedirs(mixing_dir, exist_ok=True)
+    out_path = os.path.join(mixing_dir, "model1_mixing_spectral.txt")
     lambdas = np.linspace(0.0, 0.99, 100)
 
     header = "{:<8} {:>14} {:>14} {:>14}".format(
@@ -251,16 +254,27 @@ def write_mixing_time_spectral(
             f.write(line + "\n")
 
 
-def generate_stationary_histograms(M: int = 2000, eps: float = 1e-10) -> None:
-    write_all_stationary_histograms(M, eps)
+def generate_stationary_histograms(
+    M: int = 2000, eps: float = 1e-10, output_dir: str | None = None
+) -> None:
+    write_all_stationary_histograms(M, eps, output_dir=output_dir)
 
 
 def generate_stationary_stats(M: int = 2000, eps: float = 1e-10) -> None:
     write_all_stats_to_file(M, eps)
 
 
-def generate_mixing_time_spectral(M: int = 2000, eps_mixing: float = 1e-3) -> None:
-    write_mixing_time_spectral(M=M, eps_stationary=1e-10, eps_mixing=eps_mixing)
+def generate_mixing_time_spectral(
+    M: int = 2000,
+    eps_mixing: float = 1e-3,
+    output_dir: str | None = None,
+) -> None:
+    write_mixing_time_spectral(
+        M=M,
+        eps_stationary=1e-10,
+        eps_mixing=eps_mixing,
+        output_dir=output_dir,
+    )
 
 
 if __name__ == "__main__":
@@ -272,9 +286,13 @@ if __name__ == "__main__":
     run_stationary_stats = True
     run_mixing_spectral = True
 
+    nodes_dir = os.path.join(BASE_OUTPUT_DIR, f"{M}nodes")
+    stationary_dir = os.path.join(nodes_dir, "stationary")
+    mixing_dir = os.path.join(nodes_dir, "mixing")
+
     if run_stationary_histograms:
-        generate_stationary_histograms(M, eps_stationary)
+        generate_stationary_histograms(M, eps_stationary, output_dir=stationary_dir)
     if run_stationary_stats:
         generate_stationary_stats(M, eps_stationary)
     if run_mixing_spectral:
-        generate_mixing_time_spectral(M, eps_mixing)
+        generate_mixing_time_spectral(M, eps_mixing, output_dir=mixing_dir)
