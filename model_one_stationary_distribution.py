@@ -21,6 +21,7 @@ P_{i,j} = H_i(j + 1/2) - H_i(j - 1/2). The stationary distribution pi is compute
 by power iteration on P.
 """
 
+import argparse
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -389,7 +390,19 @@ def generate_mixing_time_spectral(
 
 
 if __name__ == "__main__":
-    n = 1000
+    parser = argparse.ArgumentParser(
+        description="Model One: stationary distribution and mixing time."
+    )
+    parser.add_argument(
+        "n",
+        type=int,
+        nargs="?",
+        default=1000,
+        help="Number of nodes (default: 1000)",
+    )
+    args = parser.parse_args()
+    n = args.n
+
     eps_stationary = 1e-10
     eps_mixing = 1e-3
 

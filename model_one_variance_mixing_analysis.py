@@ -99,31 +99,31 @@ def variance_model(
     lam: float | np.ndarray, n: int, a: float, b: float
 ) -> float | np.ndarray:
     r"""
-    Parametric model for variance: σ²(λ) = n²(1−λ) / (a + bλ).
+    Parametric model for variance: σ²(λ) = (n−1)²(1−λ) / (a + bλ).
     Parameters a and b are fitted from data.
     """
     lam = np.asarray(lam)
     denom = a + b * lam
     if np.any(denom <= 0):
         raise ValueError("a + b*λ must be positive for all λ in the range.")
-    return (n ** 2) * (1.0 - lam) / denom
+    return ((n - 1) ** 2) * (1.0 - lam) / denom
 
 
 def fit_variance_model(
     lam: np.ndarray, variances: np.ndarray, n: int
 ) -> tuple[float, float]:
     r"""
-    Fit parameters a, b in σ²(λ) = n²(1−λ)/(a + bλ) from empirical (lam, variances).
+    Fit parameters a, b in σ²(λ) = (n−1)²(1−λ)/(a + bλ) from empirical (lam, variances).
 
-    From the model, a + b·λ = n²(1−λ)/σ², so we solve the linear system
-    [1, λ_i] @ [a, b] = n²(1−λ_i)/σ²_i in least-squares sense.
+    From the model, a + b·λ = (n−1)²(1−λ)/σ², so we solve the linear system
+    [1, λ_i] @ [a, b] = (n−1)²(1−λ_i)/σ²_i in least-squares sense.
     """
     valid = variances > 1e-15
     if not np.any(valid):
         raise ValueError("No positive variances to fit.")
     lam_f = lam[valid]
     var_f = variances[valid]
-    y = (n ** 2) * (1.0 - lam_f) / var_f
+    y = ((n - 1) ** 2) * (1.0 - lam_f) / var_f
     X = np.column_stack([np.ones_like(lam_f), lam_f])
     (a, b), *_ = np.linalg.lstsq(X, y, rcond=None)
     if a + b * np.min(lam_f) <= 0 or a + b * np.max(lam_f) <= 0:
@@ -135,8 +135,8 @@ def fit_variance_model(
 
 def plot_variance_with_conjecture(n: int = DEFAULT_N) -> None:
     """
-    Plot empirical variance (from data) and the fitted model
-    σ²(λ) = n²(1−λ)/(a + bλ) with a, b fitted from the data.
+    Side-by-side: (left) data vs fitted (n−1)²(1−λ)/(a+bλ); (right) data vs
+    original conjecture (n−1)²(1−λ)/(12(3+λ)).
     """
     nodes_dir = _nodes_dir(n)
     analysis_dir = os.path.join(nodes_dir, "analysis")
@@ -148,27 +148,56 @@ def plot_variance_with_conjecture(n: int = DEFAULT_N) -> None:
     lam_var, variances = load_stationary_variance(stationary_path)
     a, b = fit_variance_model(lam_var, variances, n)
     var_fitted = variance_model(lam_var, n, a, b)
+    var_original = variance_conjecture(lam_var, n)
 
-    fig, ax = plt.subplots()
-    ax.plot(
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+
+    # Left: data vs fitted (n-1)²(1-λ)/(a+bλ)
+    ax_left = axes[0]
+    ax_left.plot(
         lam_var,
         variances,
         color="tab:blue",
         linewidth=2.0,
-        label="Stationary distribution variance (data)",
+        label="Data",
     )
-    ax.plot(
+    ax_left.plot(
         lam_var,
         var_fitted,
         color="tab:orange",
         linestyle="--",
         linewidth=2.0,
-        label=rf"Fitted $n^2(1-\lambda)/(a+b\lambda)$, $a={a:.2f}$, $b={b:.2f}$",
+        label=rf"Fitted $(n-1)^2(1-\lambda)/(a+b\lambda)$, $a={a:.2f}$, $b={b:.2f}$",
     )
-    ax.set_xlabel(r"$\lambda$")
-    ax.set_ylabel("Variance")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    ax_left.set_xlabel(r"$\lambda$")
+    ax_left.set_ylabel("Variance")
+    ax_left.set_title(r"Data vs fitted $(n-1)^2(1-\lambda)/(a+b\lambda)$")
+    ax_left.legend()
+    ax_left.grid(True, alpha=0.3)
+
+    # Right: data vs original conjecture (n-1)²(1-λ)/(12(3+λ))
+    ax_right = axes[1]
+    ax_right.plot(
+        lam_var,
+        variances,
+        color="tab:blue",
+        linewidth=2.0,
+        label="Data",
+    )
+    ax_right.plot(
+        lam_var,
+        var_original,
+        color="tab:green",
+        linestyle="--",
+        linewidth=2.0,
+        label=r"Original $\frac{(n-1)^2(1-\lambda)}{12(3+\lambda)}$",
+    )
+    ax_right.set_xlabel(r"$\lambda$")
+    ax_right.set_ylabel("Variance")
+    ax_right.set_title(r"Data vs original conjecture $\frac{(n-1)^2(1-\lambda)}{12(3+\lambda)}$")
+    ax_right.legend()
+    ax_right.grid(True, alpha=0.3)
+
     fig.tight_layout()
     output_path = os.path.join(
         analysis_dir, "model1_variance_vs_conjecture.png"
